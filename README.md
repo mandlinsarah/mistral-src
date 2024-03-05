@@ -1,5 +1,6 @@
 # Mistral Transformer
 
+
 This repository contains minimal code to run our 7B model.
 
 Blog: [https://mistral.ai/news/announcing-mistral-7b/](https://mistral.ai/news/announcing-mistral-7b/)\
@@ -174,3 +175,5 @@ Pipeline parallelism is a set of techniques for partitioning models, enabling th
 [1] [Generating Long Sequences with Sparse Transformers, Child et al. 2019](https://arxiv.org/pdf/1904.10509.pdf)
 
 [2] [Longformer: The Long-Document Transformer, Beltagy et al. 2020](https://arxiv.org/pdf/2004.05150v2.pdf)
+
+test
