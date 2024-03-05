@@ -9,16 +9,33 @@ from mistral.model import Transformer
 from mistral.tokenizer import Tokenizer
 
 
-def sample_top_p(probs: torch.Tensor, p: float):
-    assert 0 <= p <= 1
+def optimized_sample_top_p(probs: torch.Tensor, p: float):
+    assert 0 <= p <= 1, "p must be in the range [0, 1]"
 
-    probs_sort, probs_idx = torch.sort(probs, dim=-1, descending=True)
-    probs_sum = torch.cumsum(probs_sort, dim=-1)
-    mask = probs_sum - probs_sort > p
-    probs_sort[mask] = 0.0
-    probs_sort.div_(probs_sort.sum(dim=-1, keepdim=True))
-    next_token = torch.multinomial(probs_sort, num_samples=1)
-    return torch.gather(probs_idx, -1, next_token)
+    # Sort probs in descending order and also get the indices
+    probs_sort, indices = probs.sort(dim=-1, descending=True)
+
+    # Compute the cumulative sum of sorted probabilities
+    cum_probs = probs_sort.cumsum(dim=-1)
+
+    # Identify the index where cum_probs exceeds the threshold p for the first time
+    # This index represents the cutoff point beyond which tokens are not considered
+    cutoff_index = (cum_probs > p).nonzero(as_tuple=True)[1]
+
+    # For numerical stability and to ensure that sum of probs is 1
+    # We rescale the probabilities by dividing each by the cumulative probability at the cutoff index
+    # This step effectively redistributes the probabilities of the remaining tokens
+    rescaled_probs = probs_sort / cum_probs.gather(dim=-1, index=cutoff_index.unsqueeze(-1))
+
+    # Set the probabilities of tokens beyond the cutoff index to 0
+    rescaled_probs[:, cutoff_index + 1:] = 0
+
+    # Sample from the rescaled distribution
+    next_token = torch.multinomial(rescaled_probs, num_samples=1)
+
+    # Map sampled indices back to the original order based on sorted indices
+    return indices.gather(dim=-1, index=next_token)
+
 
 
 def sample(logits: torch.Tensor, temperature: float, top_p: float):
