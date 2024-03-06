@@ -75,45 +75,33 @@ class Attention(nn.Module):
         self.wv = nn.Linear(args.dim, args.n_kv_heads * args.head_dim, bias=False)
         self.wo = nn.Linear(args.n_heads * args.head_dim, args.dim, bias=False)
 
-    def forward(
-        self,
-        x: torch.Tensor,
-        freqs_cis: torch.Tensor,
-        cache: Optional[CacheView],
-    ) -> torch.Tensor:
-        seqlen_sum, _ = x.shape
+def forward(self, x: torch.Tensor, freqs_cis: torch.Tensor, cache: Optional[CacheView]) -> torch.Tensor:
+    seqlen_sum, _ = x.shape
 
-        xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
-        xq = xq.view(seqlen_sum, self.n_heads, self.head_dim)
-        xk = xk.view(seqlen_sum, self.n_kv_heads, self.head_dim)
-        xv = xv.view(seqlen_sum, self.n_kv_heads, self.head_dim)
-        xq, xk = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis)
+    xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
+    xq = xq.view(seqlen_sum, self.n_heads, self.head_dim)
+    xk = xk.view(seqlen_sum, self.n_kv_heads, self.head_dim)
+    xv = xv.view(seqlen_sum, self.n_kv_heads, self.head_dim)
 
-        if cache is None:
-            key, val = xk, xv
-        elif cache.prefill:
+    # apply_rotary_emb might be optimized if it's a bottleneck.
+    xq, xk = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis)
+
+    # Simplify cache handling
+    if cache is not None:
+        if cache.prefill:
             key, val = cache.interleave_kv(xk, xv)
-            cache.update(xk, xv)
         else:
             cache.update(xk, xv)
-            key, val = cache.key, cache.value
-            key = key.view(
-                seqlen_sum * cache.sliding_window, self.n_kv_heads, self.head_dim
-            )
-            val = val.view(
-                seqlen_sum * cache.sliding_window, self.n_kv_heads, self.head_dim
-            )
+            key, val = cache.key.view(-1, self.n_kv_heads, self.head_dim), cache.value.view(-1, self.n_kv_heads, self.head_dim)
+    else:
+        key, val = xk, xv
 
-        # Repeat keys and values to match number of query heads
-        key, val = repeat_kv(key, val, self.repeats, dim=1)
+    # Eliminate repeat_kv if possible or optimize it
+    key, val = repeat_kv(key, val, self.repeats, dim=1) if self.repeats != 1 else (key, val)
 
-        # xformers requires (B=1, S, H, D)
-        xq, key, val = xq[None, ...], key[None, ...], val[None, ...]
-        output = memory_efficient_attention(
-            xq, key, val, None if cache is None else cache.mask
-        )
+    output = memory_efficient_attention(xq[None], key[None], val[None], None if cache is None else cache.mask)
+    return self.wo(output.squeeze(0).view(seqlen_sum, self.n_heads * self.head_dim))
 
-        return self.wo(output.view(seqlen_sum, self.n_heads * self.head_dim))
 
 
 class FeedForward(nn.Module):
