@@ -1,3 +1,5 @@
+# Updated code with improvements
+
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
@@ -47,11 +49,8 @@ class CacheView:
         to_cache_mask masks the last [max_seq_len] tokens in each sequence
         """
         n_kv_heads, head_dim = self.cache_k.shape[-2:]
-        flat_cache_k = self.cache_k.view(-1, n_kv_heads, head_dim)
-        flat_cache_v = self.cache_v.view(-1, n_kv_heads, head_dim)
-
-        flat_cache_k.index_copy_(0, self.metadata.cache_positions, xk)
-        flat_cache_v.index_copy_(0, self.metadata.cache_positions, xv)
+        self.cache_k.view(-1, n_kv_heads, head_dim).index_copy_(0, self.metadata.cache_positions, xk)
+        self.cache_v.view(-1, n_kv_heads, head_dim).index_copy_(0, self.metadata.cache_positions, xv)
 
     def interleave_kv(self, xk: torch.Tensor, xv: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -65,16 +64,16 @@ class CacheView:
             return xk, xv
 
         # Make it a list of [(T, H, D)]
-        xk: Tuple[torch.Tensor] = torch.split(xk, self.metadata.seqlens)  # type: ignore
-        xv: Tuple[torch.Tensor] = torch.split(xv, self.metadata.seqlens)  # type: ignore
-        assert len(xk) == len(self.kv_seqlens), f"Batch size is {len(self.kv_seqlens)}, got {len(xk)}"
+        xk_split: Tuple[torch.Tensor] = torch.split(xk, self.metadata.seqlens)  # type: ignore
+        xv_split: Tuple[torch.Tensor] = torch.split(xv, self.metadata.seqlens)  # type: ignore
+        assert len(xk_split) == len(self.kv_seqlens), f"Batch size is {len(self.kv_seqlens)}, got {len(xk_split)}"
 
         # Retrieve cache
-        cache_k = [cache_k[:seq_len] for cache_k, seq_len in zip(self.cache_k, self.kv_seqlens)]
-        cache_v = [cache_v[:seq_len] for cache_v, seq_len in zip(self.cache_v, self.kv_seqlens)]
+        cache_k = [ck[:seq_len] for ck, seq_len in zip(self.cache_k, self.kv_seqlens)]
+        cache_v = [cv[:seq_len] for cv, seq_len in zip(self.cache_v, self.kv_seqlens)]
 
-        interleaved_k = interleave_list(cache_k, list(xk))
-        interleaved_v = interleave_list(cache_v, list(xv))
+        interleaved_k = interleave_list(cache_k, list(xk_split))
+        interleaved_v = interleave_list(cache_v, list(xv_split))
 
         return torch.cat(interleaved_k, dim=0), torch.cat(interleaved_v, dim=0)
 
