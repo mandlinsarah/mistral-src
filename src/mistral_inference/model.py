@@ -41,3 +41,9 @@ class ModelBase(nn.Module, ABC):
         dtype: Optional[torch.dtype] = None,
     ) -> "ModelBase":
         pass
+
+    def to_device(self, tensor: torch.Tensor) -> torch.Tensor:
+        """
+        This helper function moves the given tensor to the device specified by the model.
+        """
+        return tensor.to(self.device, dtype=self.dtype)
