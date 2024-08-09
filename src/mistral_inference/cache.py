@@ -12,13 +12,8 @@ from xformers.ops.fmha.attn_bias import (  # type: ignore
 
 @dataclass
 class CacheInputMetadata:
-    # rope absolute positions
     positions: torch.Tensor
-    # where tokens should go in the cache
     cache_positions: torch.Tensor
-
-    # if prefill, use block diagonal causal mask
-    # else use causal with padded key mask
     prefill: bool
     mask: AttentionBias
     seqlens: List[int]
@@ -43,9 +38,6 @@ class CacheView:
         self.metadata = metadata
 
     def update(self, xk: torch.Tensor, xv: torch.Tensor) -> None:
-        """
-        to_cache_mask masks the last [max_seq_len] tokens in each sequence
-        """
         n_kv_heads, head_dim = self.cache_k.shape[-2:]
         flat_cache_k = self.cache_k.view(-1, n_kv_heads, head_dim)
         flat_cache_v = self.cache_v.view(-1, n_kv_heads, head_dim)
@@ -54,22 +46,16 @@ class CacheView:
         flat_cache_v.index_copy_(0, self.metadata.cache_positions, xv)
 
     def interleave_kv(self, xk: torch.Tensor, xv: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        This is a naive implementation and not optimized for speed.
-        """
         assert xk.ndim == xv.ndim == 3  # (B * T, H, D)
         assert xk.shape == xv.shape
 
         if all([s == 0 for s in self.metadata.seqlens]):
-            # No cache to interleave
             return xk, xv
 
-        # Make it a list of [(T, H, D)]
         xk: Tuple[torch.Tensor] = torch.split(xk, self.metadata.seqlens)  # type: ignore
         xv: Tuple[torch.Tensor] = torch.split(xv, self.metadata.seqlens)  # type: ignore
         assert len(xk) == len(self.kv_seqlens), f"Batch size is {len(self.kv_seqlens)}, got {len(xk)}"
 
-        # Retrieve cache
         cache_k = [cache_k[:seq_len] for cache_k, seq_len in zip(self.cache_k, self.kv_seqlens)]
         cache_v = [cache_v[:seq_len] for cache_v, seq_len in zip(self.cache_v, self.kv_seqlens)]
 
@@ -100,11 +86,6 @@ class CacheView:
 
 
 class BufferCache:
-    """
-    This is an example that implements a buffer cache, allowing for variable length sequences.
-    Allocated cache is rectangular which is wasteful (see PagedAttention for better mechanisms)
-    """
-
     def __init__(
         self,
         n_layers: int,
@@ -119,7 +100,6 @@ class BufferCache:
 
         self.cache_k = torch.empty((n_layers, max_batch_size, max_seq_len, n_kv_heads, head_dim))
         self.cache_v = torch.empty((n_layers, max_batch_size, max_seq_len, n_kv_heads, head_dim))
-        # holds the valid length for each batch element in the cache
         self.kv_seqlens: Optional[torch.Tensor] = None
 
     def get_view(self, layer_id: int, metadata: CacheInputMetadata) -> CacheView:
@@ -147,9 +127,6 @@ class BufferCache:
         self.kv_seqlens += torch.tensor(seqlens, device=self.device, dtype=torch.long)
 
     def get_input_metadata(self, seqlens: List[int]) -> CacheInputMetadata:
-        """
-        Get metadata about cache positions
-        """
         if self.kv_seqlens is None:
             self.init_kvseqlens(len(seqlens))
 
