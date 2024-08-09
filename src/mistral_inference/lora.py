@@ -102,12 +102,15 @@ class LoRALoaderMixin:
 
     def _load_lora_state_dict(self, lora_state_dict: Dict[str, torch.Tensor], scaling: float = 2.0) -> None:
         """Loads LoRA state_dict"""
-        lora_dtypes = set([p.dtype for p in lora_state_dict.values()])
-        assert (
-            len(lora_dtypes) == 1
-        ), f"LoRA weights have multiple different dtypes {lora_dtypes}. All weights need to have the same dtype"
-        lora_dtype = lora_dtypes.pop()
-        assert lora_dtype == self.dtype, f"LoRA weights dtype differs from model's dtype {lora_dtype} != {self.dtype}"  # type: ignore[attr-defined]
+        lora_dtypes = set(p.dtype for p in lora_state_dict.values())
+        assert len(lora_dtypes) == 1, (
+            f"LoRA weights have multiple different dtypes {lora_dtypes}. "
+            "All weights need to have the same dtype"
+        )
+        lora_dtype = next(iter(lora_dtypes))
+        assert lora_dtype == self.dtype, (
+            f"LoRA weights dtype ({lora_dtype}) differs from model's dtype ({self.dtype})"
+        )  # type: ignore[attr-defined]
         assert all("lora" in key for key in lora_state_dict.keys())
 
         # move tensors to device
